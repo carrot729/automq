@@ -298,8 +298,6 @@ public class StreamControlManager {
         if (nodeId != currentRangeOwner && lockedNodes.contains(currentRangeOwner)) {
             // Forbidden other nodes to open the stream if the last range is owned by a locked node
             resp.setErrorCode(Errors.NODE_LOCKED.code());
-            streamMetadata.tags().get(StreamTags.Topic.KEY)
-            quorumController.alterPartition()
             log.warn("[OpenStream] the stream's last range is owned by a locked node {}. streamId={}, streamEpoch={}, requestEpoch={}, nodeId={}, nodeEpoch={}",
                 currentRangeOwner, streamId, streamMetadata.currentEpoch(), epoch, nodeId, nodeEpoch);
             return ControllerResult.of(Collections.emptyList(), resp);
