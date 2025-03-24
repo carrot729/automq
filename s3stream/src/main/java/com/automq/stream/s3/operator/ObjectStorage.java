@@ -69,6 +69,8 @@ public interface ObjectStorage {
      */
     CompletableFuture<Void> delete(List<ObjectPath> objectPaths);
 
+    short bucketId();
+
     class ObjectPath {
         private final short bucketId;
         private final String key;
@@ -176,7 +178,7 @@ public interface ObjectStorage {
             return apiCallAttemptTimeout;
         }
 
-        // The value will be set by writer
+        // Writer will set the value
         WriteOptions bucketId(short bucketId) {
             this.bucketId = bucketId;
             return this;

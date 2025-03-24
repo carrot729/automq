@@ -13,10 +13,13 @@ package com.automq.stream.s3.operator;
 
 import com.automq.stream.s3.metrics.operations.S3Operation;
 import com.automq.stream.s3.network.NetworkBandwidthLimiter;
-import io.netty.buffer.ByteBuf;
+
+import org.apache.commons.lang3.tuple.Pair;
+
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import org.apache.commons.lang3.tuple.Pair;
+
+import io.netty.buffer.ByteBuf;
 
 public class LocalFileObjectStorage extends AbstractObjectStorage {
     protected LocalFileObjectStorage(BucketURI bucketURI,

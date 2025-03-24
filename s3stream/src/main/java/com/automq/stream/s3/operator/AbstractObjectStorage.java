@@ -660,6 +660,11 @@ public abstract class AbstractObjectStorage implements ObjectStorage {
     }
 
     @Override
+    public short bucketId() {
+        return bucketURI.bucketId();
+    }
+
+    @Override
     public void close() {
         writeLimiterCallbackExecutor.shutdown();
         readCallbackExecutor.shutdown();
