@@ -92,6 +92,22 @@ public class CircuitObjectStorage implements ObjectStorage {
         throw new UnsupportedOperationException();
     }
 
+    public synchronized CompletableFuture<Void> transitionTo(CircuitStatus to) {
+        // TODO: async the operation
+        CircuitStatus from = circuitStatus;
+        if (to == from) {
+            return CompletableFuture.completedFuture(null);
+        } else {
+            if (from == CircuitStatus.OPEN && to == CircuitStatus.CLOSED) {
+                // The circuit status transition from OPEN to CLOSED
+                // TODO: register node with mark
+            }
+        }
+        // 请求远程
+        // 先用阻塞实现
+        return CompletableFuture.completedFuture(null);
+    }
+
     public class CircuitWriter implements Writer {
         private final WriteOptions options;
         private final String objectPath;
@@ -139,9 +155,11 @@ public class CircuitObjectStorage implements ObjectStorage {
                     cf.complete(null);
                     return;
                 }
-                writer = fallbackStorage.writer(options.copy(), objectPath);
-                writeList.forEach(p -> FutureUtil.propagate(writer.write(p.getKey()), p.getValue()));
-                FutureUtil.propagate(writer.close(), cf);
+                transitionTo(CircuitStatus.CLOSED).whenComplete((nil, ex2) -> {
+                    writer = fallbackStorage.writer(options.copy(), objectPath);
+                    writeList.forEach(p -> FutureUtil.propagate(writer.write(p.getKey()), p.getValue()));
+                    FutureUtil.propagate(writer.close(), cf);
+                });
             });
             return cf;
         }

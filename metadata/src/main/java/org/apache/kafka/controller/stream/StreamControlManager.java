@@ -72,6 +72,7 @@ import org.apache.kafka.server.common.automq.AutoMQVersion;
 import org.apache.kafka.server.metrics.s3stream.S3StreamKafkaMetricsManager;
 import org.apache.kafka.timeline.SnapshotRegistry;
 import org.apache.kafka.timeline.TimelineHashMap;
+import org.apache.kafka.timeline.TimelineHashSet;
 import org.apache.kafka.timeline.TimelineLong;
 
 import com.automq.stream.s3.ObjectReader;
@@ -122,6 +123,7 @@ public class StreamControlManager {
     private final TimelineHashMap<Long/*streamId*/, StreamRuntimeMetadata> streamsMetadata;
 
     private final TimelineHashMap<Integer/*nodeId*/, NodeRuntimeMetadata> nodesMetadata;
+    private final TimelineHashSet<Integer> lockedNodes;
 
     private final TimelineHashMap<Long, Integer> stream2node;
     private final TimelineHashMap<Integer/* nodeId */, /* streams */DeltaList<Long>> node2streams;
@@ -152,6 +154,7 @@ public class StreamControlManager {
         this.nextAssignedStreamId = new TimelineLong(snapshotRegistry);
         this.streamsMetadata = new TimelineHashMap<>(snapshotRegistry, 100000);
         this.nodesMetadata = new TimelineHashMap<>(snapshotRegistry, 0);
+        this.lockedNodes = new TimelineHashSet<>(snapshotRegistry, 100);
         this.stream2node = new TimelineHashMap<>(snapshotRegistry, 100000);
         this.node2streams = new TimelineHashMap<>(snapshotRegistry, 100);
 
@@ -291,6 +294,15 @@ public class StreamControlManager {
             resp.setErrorCode(Errors.STREAM_NOT_CLOSED.code());
             return ControllerResult.of(Collections.emptyList(), resp);
         }
+        int currentRangeOwner = streamMetadata.currentRangeOwner();
+        if (nodeId != currentRangeOwner && lockedNodes.contains(currentRangeOwner)) {
+            // Forbidden other nodes to open the stream if the last range is owned by a locked node
+            resp.setErrorCode(Errors.NODE_LOCKED.code());
+            log.warn("[OpenStream] the stream's last range is owned by a locked node {}. streamId={}, streamEpoch={}, requestEpoch={}, nodeId={}, nodeEpoch={}",
+                currentRangeOwner, streamId, streamMetadata.currentEpoch(), epoch, nodeId, nodeEpoch);
+            return ControllerResult.of(Collections.emptyList(), resp);
+        }
+
         // now the request is valid, update the stream's epoch and create a new range for this node
         List<ApiMessageAndVersion> records = new ArrayList<>();
         int newRangeIndex = streamMetadata.currentRangeIndex() + 1;
@@ -1254,6 +1266,14 @@ public class StreamControlManager {
 
         });
         return ControllerResult.of(records, null);
+    }
+
+    public void lock(int nodeId) {
+        lockedNodes.add(nodeId);
+    }
+
+    public void unlock(int nodeId) {
+        lockedNodes.remove(nodeId);
     }
 
     public void replay(AssignedStreamIdRecord record) {
