@@ -15,15 +15,12 @@ import com.automq.stream.s3.metadata.S3ObjectMetadata;
 import com.automq.stream.s3.operator.ObjectStorage;
 import com.automq.stream.s3.operator.Writer;
 import com.automq.stream.utils.FutureUtil;
-
-import org.apache.commons.lang3.tuple.Pair;
-
+import io.netty.buffer.ByteBuf;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-
-import io.netty.buffer.ByteBuf;
+import org.apache.commons.lang3.tuple.Pair;
 
 /**
  * The circuit object storage only adapts to write ahead log uploading and block cache reading.
@@ -48,7 +45,7 @@ public class CircuitObjectStorage implements ObjectStorage {
     }
 
     @Override
-    public Writer writer(WriteOptions options, String objectPath) {
+    public synchronized Writer writer(WriteOptions options, String objectPath) {
         switch (circuitStatus) {
             case OPEN:
             case HALF_OPEN:
@@ -93,18 +90,53 @@ public class CircuitObjectStorage implements ObjectStorage {
     }
 
     public synchronized CompletableFuture<Void> transitionTo(CircuitStatus to) {
-        // TODO: async the operation
         CircuitStatus from = circuitStatus;
-        if (to == from) {
-            return CompletableFuture.completedFuture(null);
-        } else {
-            if (from == CircuitStatus.OPEN && to == CircuitStatus.CLOSED) {
-                // The circuit status transition from OPEN to CLOSED
-                // TODO: register node with mark
-            }
+        switch (from) {
+            case OPEN:
+                switch (to) {
+                    case OPEN:
+                        break;
+                    case HALF_OPEN:
+                        throw new IllegalStateException("Cannot transition from OPEN to HALF_OPEN");
+                    case CLOSED:
+                        circuitStatus = CircuitStatus.HALF_OPEN;
+                        break;
+                    default:
+                        throw new IllegalStateException("Unknown to state " + from);
+                }
+                break;
+            case HALF_OPEN:
+                switch (to) {
+                    case OPEN:
+                        circuitStatus = CircuitStatus.OPEN;
+                        break;
+                    case HALF_OPEN:
+                        break;
+                    case CLOSED:
+                        circuitStatus = CircuitStatus.CLOSED;
+                        break;
+                    default:
+                        throw new IllegalStateException("Unknown to state " + from);
+                }
+                break;
+            case CLOSED:
+                switch (to) {
+                    case OPEN:
+                        circuitStatus = CircuitStatus.OPEN;
+                        break;
+                    case HALF_OPEN:
+                        circuitStatus = CircuitStatus.HALF_OPEN;
+                        break;
+                    case CLOSED:
+                        break;
+                    default:
+                        throw new IllegalStateException("Unknown to state " + from);
+                }
+                break;
+            default:
+                throw new IllegalStateException("Unknown from state " + from);
         }
-        // 请求远程
-        // 先用阻塞实现
+        // TODO: register node with tag
         return CompletableFuture.completedFuture(null);
     }
 

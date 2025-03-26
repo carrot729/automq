@@ -17,7 +17,33 @@
 
 package org.apache.kafka.controller.stream;
 
+import com.automq.stream.s3.ObjectReader;
+import com.automq.stream.s3.compact.CompactOperations;
+import com.automq.stream.s3.metadata.S3StreamConstant;
+import com.automq.stream.s3.metadata.StreamOffsetRange;
+import com.automq.stream.s3.metadata.StreamState;
+import com.google.common.base.Strings;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.message.AlterPartitionReassignmentsRequestData;
 import org.apache.kafka.common.message.CloseStreamsRequestData.CloseStreamRequest;
 import org.apache.kafka.common.message.CloseStreamsResponseData.CloseStreamResponse;
 import org.apache.kafka.common.message.CommitStreamObjectRequestData;
@@ -56,6 +82,7 @@ import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.ThreadUtils;
 import org.apache.kafka.controller.ClusterControlManager;
+import org.apache.kafka.controller.ControllerRequestContext;
 import org.apache.kafka.controller.ControllerResult;
 import org.apache.kafka.controller.FeatureControlManager;
 import org.apache.kafka.controller.QuorumController;
@@ -74,35 +101,8 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 import org.apache.kafka.timeline.TimelineHashMap;
 import org.apache.kafka.timeline.TimelineHashSet;
 import org.apache.kafka.timeline.TimelineLong;
-
-import com.automq.stream.s3.ObjectReader;
-import com.automq.stream.s3.compact.CompactOperations;
-import com.automq.stream.s3.metadata.S3StreamConstant;
-import com.automq.stream.s3.metadata.StreamOffsetRange;
-import com.automq.stream.s3.metadata.StreamState;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static com.automq.stream.s3.metadata.ObjectUtils.NOOP_OBJECT_ID;
 
@@ -300,6 +300,7 @@ public class StreamControlManager {
             resp.setErrorCode(Errors.NODE_LOCKED.code());
             log.warn("[OpenStream] the stream's last range is owned by a locked node {}. streamId={}, streamEpoch={}, requestEpoch={}, nodeId={}, nodeEpoch={}",
                 currentRangeOwner, streamId, streamMetadata.currentEpoch(), epoch, nodeId, nodeEpoch);
+            tryReassignPartitionBack(streamMetadata);
             return ControllerResult.of(Collections.emptyList(), resp);
         }
 
@@ -1085,7 +1086,7 @@ public class StreamControlManager {
     public List<StreamRuntimeMetadata> getOpeningStreams(int nodeId) {
         List<Long> streamIdList = Optional.ofNullable(node2streams.get(nodeId)).map(l -> l.toList()).orElse(Collections.emptyList());
         List<StreamRuntimeMetadata> streams = new ArrayList<>(streamIdList.size());
-        for (Long streamId: streamIdList) {
+        for (Long streamId : streamIdList) {
             StreamRuntimeMetadata streamRuntimeMetadata = streamsMetadata.get(streamId);
             if (streamRuntimeMetadata == null) {
                 continue;
@@ -1577,6 +1578,32 @@ public class StreamControlManager {
     }
 
     private void tryReassignPartitionBack(StreamRuntimeMetadata stream) {
-
+        ControllerRequestContext context = new ControllerRequestContext(null, null, OptionalLong.empty());
+        AlterPartitionReassignmentsRequestData request = new AlterPartitionReassignmentsRequestData();
+        String rawTopicId = stream.tags().get(StreamTags.Topic.KEY);
+        String rawPartitionIndex = stream.tags().get(StreamTags.Partition.KEY);
+        if (Strings.isNullOrEmpty(rawTopicId) || Strings.isNullOrEmpty(rawPartitionIndex)) {
+            return;
+        }
+        Uuid topicId = Uuid.fromString(rawTopicId);
+        int partitionIndex = StreamTags.Partition.decode(rawPartitionIndex);
+        int nodeId = stream.currentRangeOwner();
+        quorumController.findTopicNames(context, List.of(topicId)).thenAccept(uuid2name -> {
+            String topicName = Optional.ofNullable(uuid2name.get(topicId)).filter(r -> !r.isError()).map(r -> r.result()).orElse(null);
+            if (topicName == null) {
+                return;
+            }
+            request.setTopics(List.of(new AlterPartitionReassignmentsRequestData.ReassignableTopic()
+                .setName(topicName)
+                .setPartitions(List.of(
+                    new AlterPartitionReassignmentsRequestData.ReassignablePartition()
+                        .setPartitionIndex(partitionIndex)
+                        .setReplicas(List.of(nodeId))
+                ))));
+            quorumController.alterPartitionReassignments(context, request)
+                .thenAccept(rst -> {
+                    LOGGER.info("[REASSIGN_PARTITION_BACK_TO_LOCKED_NODE],req={},resp={}", request, rst);
+                });
+        });
     }
 }
