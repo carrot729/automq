@@ -20,12 +20,12 @@ jobs:
       - name: Build s3stream
         working-directory: ./s3stream
         run: mvn clean install -U -DskipTests
-      - uses: actions/checkout@v3
-        with:
-          repository: AutoMQ/s3stream-e2e
-          ref: main
-          path: s3stream-e2e
-          token: ${{ secrets.PAT_E2E }}
+      # - uses: actions/checkout@v3
+      #   with:
+      #     repository: AutoMQ/s3stream-e2e
+      #     ref: main
+      #     path: s3stream-e2e
+      #     token: ${{ secrets.PAT_E2E }}
       - name: Change s3stream version
         run: |
           export S3STREAM_VERSION=$(cat s3stream/target/maven-archiver/pom.properties | grep version | awk -F '=' '{print $2}')
